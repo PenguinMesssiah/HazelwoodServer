@@ -1,4 +1,5 @@
 from flask import Flask, request, render_template, jsonify
+from flask_cors import CORS
 from pymongo import MongoClient
 import datetime
 import math
@@ -7,6 +8,7 @@ import json
 USING_DB = True
 
 app = Flask(__name__)
+CORS(app, origins=["https://artsexcursionairquality.org","http://localhost:5173"])
 
 @app.before_request
 def log_request_info():
