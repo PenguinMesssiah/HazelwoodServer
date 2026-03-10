@@ -1,7 +1,8 @@
-from flask import Flask, request, render_template
+from flask import Flask, request, render_template, jsonify
 from pymongo import MongoClient
 import datetime
 import math
+import json
 
 USING_DB = True
 
@@ -78,7 +79,7 @@ def index_get():
             .limit(10)
         )
 
-        quality = sum(last_ten) / len(last_ten) if last_ten else 0
+        quality = sum(doc["sensor_value"] for doc in last_ten) / len(last_ten) if last_ten else 0
         print(f"Last ten AQI values: {last_ten}")
         print(f"Average AQI: {quality}")
 
@@ -101,7 +102,8 @@ def index_get():
         }
         points.append(point)
 
-    return render_template("homepage.html", points=points)
+    #return render_template("homepage.html", points=points)
+    return jsonify(points)
 
 @app.get("/")
 def index_get_root():
@@ -183,4 +185,5 @@ def show_sensor_data(device_name):
             data.append({"type": measurement_type, "value": None})
 
     print("Averages:", data)
-    return render_template("sensor_data.html", data=data)
+    #return render_template("sensor_data.html", data=data)
+    return jsonify(data)
