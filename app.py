@@ -178,13 +178,25 @@ def show_sensor_data(device_name):
             .limit(10)
         )
 
-        values = [doc["sensor_value"] for doc in last_ten if "sensor_value" in doc]
-        if values:
-            average = sum(values) / len(values)
-            data.append({"type": measurement_type, "value": round(average, 2)})
+        if last_ten:
+            values = [
+                {
+                    "value": doc["sensor_value"],
+                    "timestamp": doc["timestamp"].isoformat() if
+                    isinstance(doc["timestamp"], datetime.datetime) else 
+                    doc["timestamp"]    
+                }
+                for doc in last_ten
+                if "sensor_value" in doc
+            ]
+            data.append({"type": measurement_type, "values": values})    
+        #if values:
+        #    average = sum(values) / len(values)
+        #    data.append({"type": measurement_type, "value": round(average, 2)})
+            #data.append({"type": measurement_type, "value": values})
         else:
             print(f"No {measurement_type} data available")
-            data.append({"type": measurement_type, "value": None})
+            data.append({"type": measurement_type, "values": []})
 
     print("Averages:", data)
     #return render_template("sensor_data.html", data=data)
