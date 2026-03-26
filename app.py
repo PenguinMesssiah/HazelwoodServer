@@ -127,21 +127,35 @@ def name_route(name=None):
 def echo(echo_msg):
     return echo_msg
 
-
 @app.post("/sensor_data/<device_name>")
 def process_sensor_data(device_name):
-    # Print the raw request data
     json = request.get_json()
 
-    db["Devices"].find_one({"device_name": device_name})
+    # Register device if new
     if db["Devices"].count_documents({"device_name": device_name}) == 0:
         print(f"Device {device_name} not found in database")
         print("Adding device to database")
         db["Devices"].insert_one(
-            {"device_name": device_name, "lat": json["lat"], "long": json["long"]}
+            {"device_name": device_name, "lat": json.get("lat"), "long": json.get("long")}
         )
         print(f"Device {device_name} added to database")
 
+    # New unified format: has temperature/humidity/aqi fields directly
+    if "temperature" in json or "humidity" in json or "aqi_pm25" in json or "aqi_pm100" in json:
+        measurements = {
+            "temperature": json.get("temperature"),
+            "humidity": json.get("humidity"),
+            "aqi_pm25": json.get("aqi_pm25"),
+            "aqi_pm100": json.get("aqi_pm100"),
+        }
+        for measurement_type, value in measurements.items():
+            if value is not None:
+                print(f"Received {measurement_type} data: {value}")
+                process_data_response = process_data(device_name, measurement_type, value)
+                print(f"process_data_response: {process_data_response}")
+        return "OK"
+
+    # Legacy single-measurement format
     if "measurement_type" not in json:
         print("Missing type")
         return "Missing value", 400
@@ -151,7 +165,6 @@ def process_sensor_data(device_name):
 
     measurement_type = json["measurement_type"]
     if measurement_type not in valid_measurement_types:
-        # Create response with 400 status code
         print(f"Invalid measurement type: {measurement_type}")
         return "Invalid measurement type", 400
 
@@ -159,7 +172,6 @@ def process_sensor_data(device_name):
     print(f"Received {measurement_type} data: {value}")
     process_data_response = process_data(device_name, measurement_type, value)
     print(f"process_data_response: {process_data_response}")
-    # Create response with 200 status code
     return "OK"
 
 
