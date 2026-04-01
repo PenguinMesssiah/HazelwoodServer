@@ -96,11 +96,15 @@ def index_get():
             print(f"Device {device} not found in database")
             continue
 
+        # Get the most recent timestamp from the readings
+        most_recent_timestamp = last_ten[0]["timestamp"] if last_ten else None
+
         point = {
             "device_name": device,
             "lon": dev["long"],
             "lat": dev["lat"],
             "device_quality": quality,
+            "timestamp": most_recent_timestamp.isoformat() if isinstance(most_recent_timestamp, datetime.datetime) else most_recent_timestamp
         }
         points.append(point)
 
