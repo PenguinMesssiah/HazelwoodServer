@@ -1,4 +1,4 @@
 /__pycache__
 /hazelwood
 config.yml
-arduino_secrets.h
+HazelwoodSendData/arduino_secrets.h

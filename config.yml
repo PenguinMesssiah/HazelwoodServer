@@ -1,7 +1,0 @@
-tunnel: arts-excursions
-credentials-file: /home/hazelwood/.cloudflared/my-web-app.json
-
-ingress:
-  - hostname: artsexcursionairquality.org
-    service: http://127.0.0.1:8000  # 👈 Match Gunicorn port here
-  - service: http_status:404

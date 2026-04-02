@@ -1,0 +1,7 @@
+tunnel: your-tunnel-name
+credentials-file: /path/to/.cloudflared/credentials.json
+
+ingress:
+  - hostname: yourdomain.org
+    service: http://127.0.0.1:8000
+  - service: http_status:404
