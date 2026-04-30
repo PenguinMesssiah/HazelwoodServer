@@ -123,6 +123,10 @@ def index_get():
     return jsonify(points)
 
 
+@app.get("/sensor_data")
+def sensor_data_compat():
+    return index_get()
+
 
 @api.post("/sensor_data/<device_name>")
 def process_sensor_data(device_name):
