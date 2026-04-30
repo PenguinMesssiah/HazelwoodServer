@@ -1,4 +1,4 @@
-from flask import Flask, request, render_template, jsonify
+from flask import Flask, Blueprint, request, render_template, jsonify
 from flask_cors import CORS
 from pymongo import MongoClient
 import datetime
@@ -9,6 +9,7 @@ USING_DB = True
 
 app = Flask(__name__)
 CORS(app, origins=["https://artsexcursionairquality.org","http://localhost:5173"])
+api = Blueprint("api", __name__, url_prefix="/api")
 
 @app.before_request
 def log_request_info():
@@ -73,7 +74,7 @@ def avg_for_type(device, measurement_type, n=10):
     )
     return docs, (sum(d["sensor_value"] for d in docs) / len(docs) if docs else 0)
 
-@app.get("/sensor_data")
+@api.get("/sensor_data")
 def index_get():
     if not USING_DB:
         return "No data available"
@@ -121,46 +122,28 @@ def index_get():
     #return render_template("homepage.html", points=points)
     return jsonify(points)
 
-@app.get("/")
-def index_get_root():
-    return index_get()
-
-@app.post("/")
-def index_post():
-    data = request.get_json()
-    name = data["name"]
-    return f"Hello {name}\n"
 
 
-@app.route("/name/<name>")
-def name_route(name=None):
-    return f"Hello {name}"
-
-
-@app.get("/echo/<echo_msg>")
-def echo(echo_msg):
-    return echo_msg
-
-@app.post("/sensor_data/<device_name>")
+@api.post("/sensor_data/<device_name>")
 def process_sensor_data(device_name):
-    json = request.get_json()
+    data = request.get_json()
 
     # Register device if new
     if db["Devices"].count_documents({"device_name": device_name}) == 0:
         print(f"Device {device_name} not found in database")
         print("Adding device to database")
         db["Devices"].insert_one(
-            {"device_name": device_name, "lat": json.get("lat"), "long": json.get("long")}
+            {"device_name": device_name, "lat": data.get("lat"), "long": data.get("long")}
         )
         print(f"Device {device_name} added to database")
 
     # New unified format: has temperature/humidity/aqi fields directly
-    if "temperature" in json or "humidity" in json or "aqi_pm25" in json or "aqi_pm100" in json:
+    if "temperature" in data or "humidity" in data or "aqi_pm25" in data or "aqi_pm100" in data:
         measurements = {
-            "temperature": json.get("temperature"),
-            "humidity": json.get("humidity"),
-            "aqi_pm25": json.get("aqi_pm25"),
-            "aqi_pm100": json.get("aqi_pm100"),
+            "temperature": data.get("temperature"),
+            "humidity": data.get("humidity"),
+            "aqi_pm25": data.get("aqi_pm25"),
+            "aqi_pm100": data.get("aqi_pm100"),
         }
         for measurement_type, value in measurements.items():
             if value is not None:
@@ -170,26 +153,26 @@ def process_sensor_data(device_name):
         return "OK"
 
     # Legacy single-measurement format
-    if "measurement_type" not in json:
+    if "measurement_type" not in data:
         print("Missing type")
         return "Missing value", 400
-    if "value" not in json:
+    if "value" not in data:
         print("Missing value")
         return "Missing value", 400
 
-    measurement_type = json["measurement_type"]
+    measurement_type = data["measurement_type"]
     if measurement_type not in valid_measurement_types:
         print(f"Invalid measurement type: {measurement_type}")
         return "Invalid measurement type", 400
 
-    value = json["value"]
+    value = data["value"]
     print(f"Received {measurement_type} data: {value}")
     process_data_response = process_data(device_name, measurement_type, value)
     print(f"process_data_response: {process_data_response}")
     return "OK"
 
 
-@app.get("/sensor_data/<device_name>")
+@api.get("/sensor_data/<device_name>")
 def show_sensor_data(device_name):
     if not USING_DB:
         return "No data available"
@@ -223,3 +206,7 @@ def show_sensor_data(device_name):
     print("Averages:", data)
     #return render_template("sensor_data.html", data=data)
     return jsonify(data)
+
+
+#Register blueprint
+app.register_blueprint(api)
