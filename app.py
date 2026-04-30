@@ -61,6 +61,17 @@ def process_data(device_name, sensor_type, value):
     # Add AQI data to database
     return db["Sensor Data"].insert_one(datapoint)
 
+def avg_for_type(device, measurement_type, n=10):
+    if not USING_DB:
+        raise RuntimeError("avg_for_type requires a database connection")
+    
+    docs = list(
+        db["Sensor Data"]
+        .find({"measurement_type": measurement_type, "device_name": device})
+        .sort("timestamp", -1)
+        .limit(n)
+    )
+    return docs, (sum(d["sensor_value"] for d in docs) / len(docs) if docs else 0)
 
 @app.get("/sensor_data")
 def index_get():
@@ -74,16 +85,13 @@ def index_get():
     for device in devices:
         print(f"Device: {device}")
 
-        last_ten = list(
-            db["Sensor Data"]
-            .find({"measurement_type": "aqi_pm25", "device_name": device})
-            .sort("timestamp", -1)
-            .limit(10)
-        )
+        aqi_docs,  quality     = avg_for_type(device, "aqi_pm25")
+        temp_docs, temperature = avg_for_type(device, "temperature")
+        hum_docs,  humidity    = avg_for_type(device, "humidity")
 
-        quality = sum(doc["sensor_value"] for doc in last_ten) / len(last_ten) if last_ten else 0
-        print(f"Last ten AQI values: {last_ten}")
         print(f"Average AQI: {quality}")
+        print(f"Average Temperature: {temperature}")
+        print(f"Average humidity: {humidity}")
 
         if quality > 0:
             quality = math.ceil(quality / 10) * 10
@@ -97,13 +105,15 @@ def index_get():
             continue
 
         # Get the most recent timestamp from the readings
-        most_recent_timestamp = last_ten[0]["timestamp"] if last_ten else None
+        most_recent_timestamp = aqi_docs[0]["timestamp"] if aqi_docs else None
 
         point = {
             "device_name": device,
             "lon": dev["long"],
             "lat": dev["lat"],
             "device_quality": quality,
+            "temperature": temperature,
+            "humidity": humidity,
             "timestamp": most_recent_timestamp.isoformat() if isinstance(most_recent_timestamp, datetime.datetime) else most_recent_timestamp
         }
         points.append(point)
@@ -206,10 +216,6 @@ def show_sensor_data(device_name):
                 if "sensor_value" in doc
             ]
             data.append({"type": measurement_type, "values": values})    
-        #if values:
-        #    average = sum(values) / len(values)
-        #    data.append({"type": measurement_type, "value": round(average, 2)})
-            #data.append({"type": measurement_type, "value": values})
         else:
             print(f"No {measurement_type} data available")
             data.append({"type": measurement_type, "values": []})
