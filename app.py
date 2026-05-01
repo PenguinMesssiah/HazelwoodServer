@@ -1,11 +1,13 @@
-from flask import Flask, Blueprint, request, render_template, jsonify
+from flask import Flask, Blueprint, request, render_template, jsonify, send_from_directory
 from flask_cors import CORS
 from pymongo import MongoClient
 import datetime
 import math
 import json
+import os
 
 USING_DB = True
+DIST_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../AirQualityMonitor-Frontend/dist")
 
 app = Flask(__name__)
 CORS(app, origins=["https://artsexcursionairquality.org","http://localhost:5173"])
@@ -221,3 +223,16 @@ def show_sensor_data(device_name):
 
 #Register blueprint
 app.register_blueprint(api)
+
+@app.get("/")
+def serve_frontend():
+    return send_from_directory(DIST_DIR, "index.html")
+
+@app.route("/<path:path>")
+def serve_static(path):
+    if path.startswith("api/"):
+        return {"error": "Not found"}, 404
+    full_path = os.path.join(DIST_DIR, path)
+    if os.path.exists(full_path):
+        return send_from_directory(DIST_DIR, path)
+    return send_from_directory(DIST_DIR, "index.html")
