@@ -74,6 +74,10 @@ def avg_for_type(device, measurement_type, n=10):
     )
     return docs, (sum(d["sensor_value"] for d in docs) / len(docs) if docs else 0)
 
+def apply_epa_correction(pm25_raw, humidity):
+    corrected = 0.524 * pm25_raw - 0.0862 * humidity + 5.75
+    return max(corrected, 0)  # clamp to 0, can't be negative
+
 @api.get("/sensor_data")
 def index_get():
     if not USING_DB:
@@ -90,15 +94,18 @@ def index_get():
         temp_docs, temperature = avg_for_type(device, "temperature")
         hum_docs,  humidity    = avg_for_type(device, "humidity")
 
-        print(f"Average AQI: {quality}")
-        print(f"Average Temperature: {temperature}")
-        print(f"Average humidity: {humidity}")
+        # Apply EPA correction before rounding
+        if quality > 0 and humidity > 0:
+            quality = apply_epa_correction(quality, humidity)
 
         if quality > 0:
             quality = math.ceil(quality / 10) * 10
         else:
             quality = 0
-        print(f"Rounded AQI: {quality}")
+
+        print(f"Average AQI: {quality}")
+        print(f"Average Temperature: {temperature}")
+        print(f"Average humidity: {humidity}")
 
         dev = db["Devices"].find_one({"device_name": device})
         if dev is None:
