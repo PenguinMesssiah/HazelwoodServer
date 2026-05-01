@@ -16,14 +16,12 @@ int keyIndex = 0;            // your network key Index number (needed only for W
 
 int status = WL_IDLE_STATUS;
 
-//char name[] = "Melisa";
-//char path[] = "/sensor_data/" + name;
-char name[] = "Melisa";
+char name[] = "Wiley";
 char path[32]; // size must be large enough
 char server[] = "artsexcursionairquality.org";
 
-float lat = 40.40547;
-float lon = -79.93315;
+float lat = 40.40662;
+float lon = -79.94271;
 
 //----LIBRARIES
 //Air quality monitor libraries
@@ -110,7 +108,7 @@ void setupSensors()
 void setup() {
   //Initialize serial and wait for port to open:
   Serial.begin(9600);
-  snprintf(path, sizeof(path), "/sensor_data/%s", name);
+  snprintf(path, sizeof(path), "/api/sensor_data/%s", name);
   while (!Serial) {
     ; // wait for serial port to connect. Needed for native USB port only
   }
@@ -214,8 +212,8 @@ void loop() {
   sendToServer(temperature, humidity, data.aqi_pm25_us, data.aqi_pm100_us);
 
   Serial.println("Next Reading in One Hour");
-  delay(3600000); //Wait to send next reading in one-hour
-  //delay(60000);
+  //delay(3600000); //Wait to send next reading in one-hour
+  delay(60000);
 }
 
 
