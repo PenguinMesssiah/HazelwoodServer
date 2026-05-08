@@ -86,6 +86,12 @@ def apply_epa_correction(pm25_raw, humidity):
     corrected = 0.524 * pm25_raw - 0.0862 * humidity + 5.75
     return max(corrected, 0)  # clamp to 0, can't be negative
 
+def fuzz_coord(value, precision=3):
+    "Round coordinates for privacy. 3 decimals ≈ 110m, 4 ≈ 11m."
+    if value is None:
+        return None
+    return round(value, precision)
+
 @api.get("/sensor_data")
 def index_get():
     if not USING_DB:
@@ -125,8 +131,8 @@ def index_get():
 
         point = {
             "device_name": device,
-            "lon": dev["long"],
-            "lat": dev["lat"],
+            "lon": fuzz_coord(dev["long"]),
+            "lat": fuzz_coord(dev["lat"]),
             "device_quality": quality,
             "temperature": temperature,
             "humidity": humidity,
