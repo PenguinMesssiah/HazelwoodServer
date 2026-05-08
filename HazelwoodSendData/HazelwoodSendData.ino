@@ -10,13 +10,14 @@
   
 #include "arduino_secrets.h"
 ///////please enter your sensitive data in the Secret tab/arduino_secrets.h
-char ssid[] = SECRET_SSID;        // your network SSID (name)
-char pass[] = SECRET_PASS;    // your network password (use for WPA, or use as key for WEP)
+char ssid[] = SECRET_SSID;          // your network SSID (name)
+char pass[] = SECRET_PASS;          // your network password (use for WPA, or use as key for WEP)
+char api_key[] = HAZELWOOD_API_KEY; // Hazelwood API Key 
 int keyIndex = 0;            // your network key Index number (needed only for WEP)
 
 int status = WL_IDLE_STATUS;
 
-char name[] = "Wiley";
+char name[] = "test";
 char path[32]; // size must be large enough
 char server[] = "artsexcursionairquality.org";
 
@@ -145,11 +146,15 @@ void sendToServer(float temperature, float humidity, float aqi_pm25, float aqi_p
   if (freshClient.connect(server, 443)) {
     Serial.println("connected to server");
 
+    Serial.print("Sending with key length: ");
+    Serial.println(strlen(api_key));
+
     // Build the entire request as one string and send it in one shot
     String request = "POST " + String(path) + " HTTP/1.1\r\n" +
                      "Host: " + String(server) + "\r\n" +
                      "Content-Type: application/json\r\n" +
                      "User-Agent: Arduino/1.0\r\n" +
+                     "X-API-Key: " + String(api_key) + "\r\n" +
                      "Content-Length: " + String(jsonString.length()) + "\r\n" +
                      "Connection: close\r\n" +
                      "\r\n" +
