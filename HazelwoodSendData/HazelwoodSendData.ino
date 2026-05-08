@@ -18,7 +18,7 @@ int keyIndex = 0;            // your network key Index number (needed only for W
 int status = WL_IDLE_STATUS;
 
 char name[] = "test";
-char path[32]; // size must be large enough
+char path[64]; // size must be large enough
 char server[] = "artsexcursionairquality.org";
 
 float lat = 40.40662;
@@ -110,8 +110,10 @@ void setup() {
   //Initialize serial and wait for port to open:
   Serial.begin(9600);
   snprintf(path, sizeof(path), "/api/sensor_data/%s", name);
-  while (!Serial) {
-    ; // wait for serial port to connect. Needed for native USB port only
+  
+  unsigned long start = millis();
+  while (!Serial && millis() - start < 3000) {
+    ; // wait up to 3s for serial, then continue regardless
   }
 
   setupWiFi();
@@ -192,6 +194,11 @@ void sendToServer(float temperature, float humidity, float aqi_pm25, float aqi_p
 }
 
 void loop() {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi dropped, reconnecting...");
+    setupWiFi();  // or whatever your reconnect routine is
+  }
+
   Serial.println("Waiting for PM2.5 sensor...");
   while (!aqi.read(&data)) {
       delay(500); //delay half a second
@@ -214,10 +221,15 @@ void loop() {
   Serial.print("PM10 AQI US: ");
   Serial.println(data.aqi_pm100_us);
 
+  Serial.print("PM1.0: "); Serial.print(data.pm10_standard);
+  Serial.print(" PM2.5: "); Serial.print(data.pm25_standard);
+  Serial.print(" PM10: "); Serial.println(data.pm100_standard);
+  Serial.print("Particles >0.3um: "); Serial.println(data.particles_03um);
+
   sendToServer(temperature, humidity, data.aqi_pm25_us, data.aqi_pm100_us);
 
-  Serial.println("Next Reading in One Hour");
-  //delay(3600000); //Wait to send next reading in one-hour
+  Serial.println("Next Reading in Five Minutes");
+  //delay(300000); //Wait to send next reading in five minutes
   delay(60000);
 }
 
