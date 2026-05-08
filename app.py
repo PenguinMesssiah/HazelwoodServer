@@ -1,13 +1,19 @@
-from flask import Flask, Blueprint, request, render_template, jsonify, send_from_directory
+from flask import Flask, Blueprint, request, render_template, jsonify, send_from_directory, abort
 from flask_cors import CORS
 from pymongo import MongoClient
+from functools import wraps
 import datetime
 import math
 import json
 import os
+import hmac
 
 USING_DB = True
 DIST_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../AirQualityMonitor-Frontend/dist")
+
+API_KEY = os.environ.get('HAZELWOOD_API_KEY')
+if not API_KEY:
+    raise RuntimeError("HAZELWOOD_API_KEY environment variable not set")
 
 app = Flask(__name__)
 CORS(app, origins=["https://artsexcursionairquality.org","http://localhost:5173"])
@@ -137,7 +143,18 @@ def sensor_data_compat():
     return index_get()
 
 
+def require_api_key(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        provided = request.headers.get('X-API-Key', '')
+        # hmac.compare_digest prevents timing attacks
+        if not hmac.compare_digest(provided, API_KEY):
+            abort(401)
+        return f(*args, **kwargs)
+    return decorated
+
 @api.post("/sensor_data/<device_name>")
+@require_api_key
 def process_sensor_data(device_name):
     data = request.get_json()
 
