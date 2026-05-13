@@ -1,12 +1,13 @@
-from flask import Flask, Blueprint, request, render_template, jsonify, send_from_directory, abort
+from flask import Flask, Blueprint, request, jsonify, send_from_directory, abort
 from flask_cors import CORS
 from pymongo import MongoClient
 from functools import wraps
+from urllib.parse import unquote
 import datetime
 import math
-import json
 import os
 import hmac
+import re
 
 USING_DB = True
 DIST_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../AirQualityMonitor-Frontend/dist")
@@ -19,9 +20,25 @@ app = Flask(__name__)
 CORS(app, origins=["https://artsexcursionairquality.org","http://localhost:5173"])
 api = Blueprint("api", __name__, url_prefix="/api")
 
+SCANNER_PATTERNS = re.compile(
+    r"(\.php|\.git|\.env|\.aws|wp-admin|wp-login|phpunit|"
+    r"vendor/|/admin|amplify|terraform|acme-challenge|"
+    r"eval-stdin|/cgi-bin|\.well-known/(?!acme))",
+    re.IGNORECASE,
+)
+
 @app.before_request
-def log_request_info():
-    print(f"[REQUEST] {request.method} {request.path} from {request.remote_addr}")
+def block_scanners():
+    path = request.path
+    try:
+        decoded = unquote(path).lower()
+    except Exception:
+        decoded = path.lower()
+
+    if SCANNER_PATTERNS.search(decoded):
+        return "", 444
+
+    print(f"[REQUEST] {request.method} {request.path} from {request.headers.get('CF-Connecting-IP', request.remote_addr)}")
 
 print("Starting Flask app...\n\n")
 if USING_DB:
@@ -58,7 +75,7 @@ valid_measurement_types = [
 
 def process_data(device_name, sensor_type, value):
     datapoint = {
-        "timestamp": datetime.datetime.now(),
+        "timestamp": datetime.datetime.now(datetime.timezone.utc),
         "measurement_type": sensor_type,
         "sensor_value": value,
         "device_name": device_name,
