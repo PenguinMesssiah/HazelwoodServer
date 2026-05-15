@@ -124,7 +124,7 @@ void setup() {
 }
 
 
-void sendToServer(float temperature, float humidity, float aqi_pm25, float aqi_pm100)
+void sendToServer(float temperature, float humidity, float aqi_pm25, float aqi_pm100, float aqi_pm03um)
 {
   Serial.println("Starting connection to server...");
   JsonDocument doc;
@@ -135,6 +135,7 @@ void sendToServer(float temperature, float humidity, float aqi_pm25, float aqi_p
   doc["humidity"] = humidity;
   doc["aqi_pm25"] = aqi_pm25;
   doc["aqi_pm100"] = aqi_pm100;
+  doc["aqi_pm03um"] = aqi_pm03um;
 
   String jsonString;
   serializeJson(doc, jsonString);
@@ -176,13 +177,19 @@ void sendToServer(float temperature, float humidity, float aqi_pm25, float aqi_p
 
     // Read response
     Serial.println("--- Response ---");
+    unsigned long readStart = millis();
     while (freshClient.connected() || freshClient.available()) {
-      if (freshClient.available()) {
-        char c = freshClient.read();
-        if (c >= 32 || c == '\n' || c == '\r') {
-          Serial.print(c);
+        if (freshClient.available()) {
+            char c = freshClient.read();
+            if (c >= 32 || c == '\n' || c == '\r') {
+                Serial.print(c);
+            }
+            readStart = millis();  // reset timeout on activity
         }
-      }
+        if (millis() - readStart > 5000) {
+            Serial.println("\nRead timeout!");
+            break;
+        }
     }
     Serial.println("\n--- End ---");
   } else {
@@ -194,7 +201,7 @@ void sendToServer(float temperature, float humidity, float aqi_pm25, float aqi_p
 }
 
 void loop() {
-  if (WiFi.status() != WL_CONNECTED) {
+  if (status != WL_CONNECTED) {
     Serial.println("WiFi dropped, reconnecting...");
     setupWiFi();  // or whatever your reconnect routine is
   }
@@ -226,7 +233,7 @@ void loop() {
   Serial.print(" PM10: "); Serial.println(data.pm100_standard);
   Serial.print("Particles >0.3um: "); Serial.println(data.particles_03um);
 
-  sendToServer(temperature, humidity, data.aqi_pm25_us, data.aqi_pm100_us);
+  sendToServer(temperature, humidity, data.aqi_pm25_us, data.aqi_pm100_us, data.particles_03um);
 
   Serial.println("Next Reading in Five Minutes");
   //delay(300000); //Wait to send next reading in five minutes
