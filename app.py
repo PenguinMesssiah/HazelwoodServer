@@ -1,9 +1,11 @@
 from flask import Flask, Blueprint, request, jsonify, send_from_directory, abort
+from pymongo.errors import ServerSelectionTimeoutError, ConnectionFailure
 from flask_cors import CORS
 from pymongo import MongoClient
 from functools import wraps
 from urllib.parse import unquote
 import datetime
+import pytz
 import math
 import os
 import hmac
@@ -19,6 +21,27 @@ if not API_KEY:
 app = Flask(__name__)
 CORS(app, origins=["https://artsexcursionairquality.org","http://localhost:5173"])
 api = Blueprint("api", __name__, url_prefix="/api")
+
+print("Starting Flask app...\n\n")
+if USING_DB:
+    print("Connecting to database...")
+    try:
+        client = MongoClient("localhost", 27017, serverSelectionTimeoutMS=5000)
+        # Force a round-trip
+        client.admin.command('ping')
+        db = client.Hazelwood
+        app.logger.info("Connected to database!")
+
+        if "Sensor Data" not in db.list_collection_names():
+            db.create_collection("Sensor Data")
+            app.logger.info("Created collection 'Sensor Data'")
+
+        if "Devices" not in db.list_collection_names():
+            db.create_collection("Devices")
+            app.logger.info("Created collection 'Devices'")
+    except (ServerSelectionTimeoutError, ConnectionFailure) as e:
+        app.logger.error(f"Could not reach MongoDB: {e}")
+        raise SystemExit(1)
 
 SCANNER_PATTERNS = re.compile(
     r"(\.php|\.git|\.env|\.aws|wp-admin|wp-login|phpunit|"
@@ -40,38 +63,15 @@ def block_scanners():
 
     print(f"[REQUEST] {request.method} {request.path} from {request.headers.get('CF-Connecting-IP', request.remote_addr)}")
 
-print("Starting Flask app...\n\n")
-if USING_DB:
-    print("Connecting to database...")
-    # Connecting to database
-    client = MongoClient("localhost", 27017)
-    db = client.Hazelwood
-    # Confirm the connection
-    if db is not None:
-        print("Connected to database!")
-        # Create collection if it doesn't exist
-        if "Sensor Data" not in db.list_collection_names():
-            db.create_collection("Sensor Data")
-            print("Created collection 'Sensor Data'")
-
-        if "Devices" not in db.list_collection_names():
-            db.create_collection("Devices")
-            print("Created collection 'Devices'")
-
-    else:
-        print("Failed to connect to database")
-        exit(1)
-
-
 valid_measurement_types = [
     "pm25_standard",
     "pm100_standard",
     "aqi_pm25",
     "aqi_pm100",
+    "aqi_pm03um",
     "temperature",
     "humidity",
 ]
-
 
 def process_data(device_name, sensor_type, value):
     datapoint = {
@@ -80,8 +80,8 @@ def process_data(device_name, sensor_type, value):
         "sensor_value": value,
         "device_name": device_name,
     }
-    print(f"Received {sensor_type} data: {value}")
-    print(f"Datapoint: {datapoint}")
+    app.logger.info(f"Received {sensor_type} data: {value}")
+    app.logger.info(f"Datapoint: {datapoint}")
     if not USING_DB:
         return datapoint
     # Add AQI data to database
@@ -99,15 +99,20 @@ def avg_for_type(device, measurement_type, n=10):
     )
     return docs, (sum(d["sensor_value"] for d in docs) / len(docs) if docs else 0)
 
-def apply_epa_correction(pm25_raw, humidity):
-    corrected = 0.524 * pm25_raw - 0.0862 * humidity + 5.75
-    return max(corrected, 0)  # clamp to 0, can't be negative
-
 def fuzz_coord(value, precision=3):
     "Round coordinates for privacy. 3 decimals ≈ 110m, 4 ≈ 11m."
     if value is None:
         return None
     return round(value, precision)
+
+def convert_utc_to_est(utc_time):
+  #fetch the timezone information
+  est = pytz.timezone('US/Eastern')
+ 
+  if utc_time.tzinfo is None:
+    utc_time = utc_time.replace(tzinfo=datetime.timezone.utc)
+
+  return utc_time.astimezone(est)
 
 @api.get("/sensor_data")
 def index_get():
@@ -122,19 +127,15 @@ def index_get():
         print(f"Device: {device}")
 
         aqi_docs,  quality     = avg_for_type(device, "aqi_pm25")
+        pm03_docs, pm03um      = avg_for_type(device, "aqi_pm03um")
         temp_docs, temperature = avg_for_type(device, "temperature")
         hum_docs,  humidity    = avg_for_type(device, "humidity")
 
-        # Apply EPA correction before rounding
-        if quality > 0 and humidity > 0:
-            quality = apply_epa_correction(quality, humidity)
-
-        if quality > 0:
-            quality = math.ceil(quality / 10) * 10
-        else:
-            quality = 0
+        quality = round(quality)
+        pm03um = round(pm03um)
 
         print(f"Average AQI: {quality}")
+        print(f"Average Pm03um: {pm03um}")
         print(f"Average Temperature: {temperature}")
         print(f"Average humidity: {humidity}")
 
@@ -151,6 +152,7 @@ def index_get():
             "lon": fuzz_coord(dev["long"]),
             "lat": fuzz_coord(dev["lat"]),
             "device_quality": quality,
+            "particle_03um": pm03um,
             "temperature": temperature,
             "humidity": humidity,
             "timestamp": most_recent_timestamp.isoformat() if isinstance(most_recent_timestamp, datetime.datetime) else most_recent_timestamp
@@ -186,17 +188,18 @@ def process_sensor_data(device_name):
         print(f"Device {device_name} not found in database")
         print("Adding device to database")
         db["Devices"].insert_one(
-            {"device_name": device_name, "lat": data.get("lat"), "long": data.get("long")}
+            {"device_name": device_name, "lat": fuzz_coord(data.get("lat")), "long": fuzz_coord(data.get("long"))}
         )
         print(f"Device {device_name} added to database")
 
     # New unified format: has temperature/humidity/aqi fields directly
-    if "temperature" in data or "humidity" in data or "aqi_pm25" in data or "aqi_pm100" in data:
+    if "temperature" in data or "humidity" in data or "aqi_pm25" in data or "aqi_pm100" in data or "aqi_pm03um" in data:
         measurements = {
             "temperature": data.get("temperature"),
             "humidity": data.get("humidity"),
             "aqi_pm25": data.get("aqi_pm25"),
             "aqi_pm100": data.get("aqi_pm100"),
+            "aqi_pm03um": data.get("aqi_pm03um")
         }
         for measurement_type, value in measurements.items():
             if value is not None:
@@ -205,25 +208,7 @@ def process_sensor_data(device_name):
                 print(f"process_data_response: {process_data_response}")
         return "OK"
 
-    # Legacy single-measurement format
-    if "measurement_type" not in data:
-        print("Missing type")
-        return "Missing value", 400
-    if "value" not in data:
-        print("Missing value")
-        return "Missing value", 400
-
-    measurement_type = data["measurement_type"]
-    if measurement_type not in valid_measurement_types:
-        print(f"Invalid measurement type: {measurement_type}")
-        return "Invalid measurement type", 400
-
-    value = data["value"]
-    print(f"Received {measurement_type} data: {value}")
-    process_data_response = process_data(device_name, measurement_type, value)
-    print(f"process_data_response: {process_data_response}")
-    return "OK"
-
+    return "Missing measurement fields", 400
 
 @api.get("/sensor_data/<device_name>")
 def show_sensor_data(device_name):
@@ -244,7 +229,7 @@ def show_sensor_data(device_name):
             values = [
                 {
                     "value": doc["sensor_value"],
-                    "timestamp": doc["timestamp"].isoformat() if
+                    "timestamp": convert_utc_to_est(doc["timestamp"]).isoformat() if
                     isinstance(doc["timestamp"], datetime.datetime) else 
                     doc["timestamp"]    
                 }
