@@ -5,7 +5,6 @@ from pymongo import MongoClient
 from functools import wraps
 from urllib.parse import unquote
 import datetime
-import pytz
 import math
 import os
 import hmac
@@ -106,13 +105,11 @@ def fuzz_coord(value, precision=3):
     return round(value, precision)
 
 def convert_utc_to_est(utc_time):
-  #fetch the timezone information
-  est = pytz.timezone('US/Eastern')
- 
+  #fetch the timezone information 
   if utc_time.tzinfo is None:
     utc_time = utc_time.replace(tzinfo=datetime.timezone.utc)
 
-  return utc_time.astimezone(est)
+  return utc_time.astimezone(ZoneInfo("America/New_York"))    
 
 @api.get("/sensor_data")
 def index_get():
