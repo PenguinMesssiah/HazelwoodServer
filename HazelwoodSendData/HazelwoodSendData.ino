@@ -15,8 +15,6 @@ char pass[] = SECRET_PASS;          // your network password (use for WPA, or us
 char api_key[] = HAZELWOOD_API_KEY; // Hazelwood API Key 
 int keyIndex = 0;            // your network key Index number (needed only for WEP)
 
-int status = WL_IDLE_STATUS;
-
 char name[] = "test";
 char path[64]; // size must be large enough
 char server[] = "artsexcursionairquality.org";
@@ -52,19 +50,17 @@ void setupWiFi()
   WiFi.setPins(SPIWIFI_SS, SPIWIFI_ACK, ESP32_RESETN, ESP32_GPIO0, &SPIWIFI);
   while (WiFi.status() == WL_NO_MODULE) {
     Serial.println("Communication with WiFi module failed!");
-    // don't continue
     delay(1000);
   }
 
-  // attempt to connect to Wifi network:
   Serial.print("Attempting to connect to SSID: ");
   Serial.println(ssid);
-  // Connect to WPA/WPA2 network. Change this line if using open or WEP network:
+  
   do {
-    status = WiFi.begin(ssid, pass);
     Serial.println("Connecting ...");
-    delay(100);     // wait until connection is ready!
-  } while (status != WL_CONNECTED);
+    WiFi.begin(ssid, pass);
+    delay(1000);
+  } while (WiFi.status() != WL_CONNECTED);
 
   Serial.println("Connected to wifi!");
   printWifiStatus();  
@@ -124,7 +120,7 @@ void setup() {
 }
 
 
-void sendToServer(float temperature, float humidity, float aqi_pm25, float aqi_pm100, float aqi_pm03um)
+bool sendToServer(float temperature, float humidity, float aqi_pm25, float aqi_pm100, float aqi_pm03um)
 {
   Serial.println("Starting connection to server...");
   JsonDocument doc;
@@ -146,6 +142,7 @@ void sendToServer(float temperature, float humidity, float aqi_pm25, float aqi_p
   // Fresh client for each request
   WiFiSSLClient freshClient;
   
+  bool success = false;
   if (freshClient.connect(server, 443)) {
     Serial.println("connected to server");
 
@@ -192,16 +189,33 @@ void sendToServer(float temperature, float humidity, float aqi_pm25, float aqi_p
         }
     }
     Serial.println("\n--- End ---");
+    success = true;
   } else {
     Serial.println("Connection failed!");
   }
 
   freshClient.stop();
   delay(3000);
+  return success;
+}
+
+int sendFailureCount = 0;
+const int MAX_SEND_FAILURES = 3;
+
+void resetWiFi()
+{
+  Serial.println("Resetting WiFi module...");
+  WiFi.disconnect();
+  delay(1000);
+  WiFi.end();
+  delay(2000);
+  setupWiFi();
+  sendFailureCount = 0;
+  Serial.println("WiFi reset complete.");
 }
 
 void loop() {
-  if (status != WL_CONNECTED) {
+  if (WiFi.status() != WL_CONNECTED) {
     Serial.println("WiFi dropped, reconnecting...");
     setupWiFi();  // or whatever your reconnect routine is
   }
@@ -233,11 +247,24 @@ void loop() {
   Serial.print(" PM10: "); Serial.println(data.pm100_standard);
   Serial.print("Particles >0.3um: "); Serial.println(data.particles_03um);
 
-  sendToServer(temperature, humidity, data.aqi_pm25_us, data.aqi_pm100_us, data.particles_03um);
+  bool sent = sendToServer(temperature, humidity, data.aqi_pm25_us, data.aqi_pm100_us, data.particles_03um);
+
+  if (sent) {
+    sendFailureCount = 0;
+  } else {
+    sendFailureCount++;
+    Serial.print("Send failure count: ");
+    Serial.println(sendFailureCount);
+    
+    if (sendFailureCount >= MAX_SEND_FAILURES) {
+      Serial.println("Too many failures, resetting WiFi.");
+      resetWiFi();
+    }
+  }
 
   Serial.println("Next Reading in Five Minutes");
-  //delay(300000); //Wait to send next reading in five minutes
-  delay(60000);
+  delay(300000); //Wait to send next reading in five minutes
+  //delay(60000);
 }
 
 
