@@ -59,7 +59,7 @@ void setupWiFi()
   do {
     Serial.println("Connecting ...");
     WiFi.begin(ssid, pass);
-    delay(1000);
+    delay(5000);
   } while (WiFi.status() != WL_CONNECTED);
 
   Serial.println("Connected to wifi!");
