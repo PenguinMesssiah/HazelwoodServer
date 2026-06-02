@@ -9,6 +9,16 @@
   #define ESP32_GPIO0   -1
   
 #include "arduino_secrets.h"
+//----LIBRARIES
+//Air quality monitor libraries
+#include "Adafruit_PM25AQI.h"
+//Humidity and temperature sensor libraries
+#include <Wire.h>
+#include <SPI.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_BME280.h>
+#include <Adafruit_SleepyDog.h>
+
 ///////please enter your sensitive data in the Secret tab/arduino_secrets.h
 char ssid[] = SECRET_SSID;          // your network SSID (name)
 char pass[] = SECRET_PASS;          // your network password (use for WPA, or use as key for WEP)
@@ -21,15 +31,6 @@ char server[] = "artsexcursionairquality.org";
 
 float lat = 40.40662;
 float lon = -79.94271;
-
-//----LIBRARIES
-//Air quality monitor libraries
-#include "Adafruit_PM25AQI.h"
-//Humidity and temperature sensor libraries
-#include <Wire.h>
-#include <SPI.h>
-#include <Adafruit_Sensor.h>
-#include <Adafruit_BME280.h>
 
 //----MACROS
 //Air quality monitor macros:
@@ -44,8 +45,7 @@ PM25_AQI_Data data; //structure that stores the air quality data
 //Humidity and temperature sensor definitions:
 Adafruit_BME280 bme; //  We will use I2C to talk to the sensor
 
-void setupWiFi()
-{
+void setupWiFi() {
   // check for the WiFi module:
   WiFi.setPins(SPIWIFI_SS, SPIWIFI_ACK, ESP32_RESETN, ESP32_GPIO0, &SPIWIFI);
   while (WiFi.status() == WL_NO_MODULE) {
@@ -66,8 +66,7 @@ void setupWiFi()
   printWifiStatus();  
 }
 
-void setupSensors()
-{
+void setupSensors() {
   unsigned status; //variable to indicate status of the temperature and humidity sensor
   //initialize digital ports
   pinMode(PM25AQI_RESET, OUTPUT); //pin connected to reset of air quality monitor set to output
@@ -101,27 +100,7 @@ void setupSensors()
     Serial.println("-- Default Test Temperature and Humidity --");
 }
 
-
-void setup() {
-  //Initialize serial and wait for port to open:
-  Serial.begin(9600);
-  snprintf(path, sizeof(path), "/api/sensor_data/%s", name);
-  
-  unsigned long start = millis();
-  while (!Serial && millis() - start < 3000) {
-    ; // wait up to 3s for serial, then continue regardless
-  }
-
-  setupWiFi();
-  String fv = WiFi.firmwareVersion();
-  Serial.print("Firmware version: ");
-  Serial.println(fv);
-  setupSensors();
-}
-
-
-bool sendToServer(float temperature, float humidity, float aqi_pm25, float aqi_pm100, float aqi_pm03um)
-{
+void sendToServer(float temperature, float humidity, float aqi_pm25, float aqi_pm100, float aqi_pm03um) {
   Serial.println("Starting connection to server...");
   JsonDocument doc;
   doc["name"] = name;
@@ -142,7 +121,6 @@ bool sendToServer(float temperature, float humidity, float aqi_pm25, float aqi_p
   // Fresh client for each request
   WiFiSSLClient freshClient;
   
-  bool success = false;
   if (freshClient.connect(server, 443)) {
     Serial.println("connected to server");
 
@@ -189,32 +167,42 @@ bool sendToServer(float temperature, float humidity, float aqi_pm25, float aqi_p
         }
     }
     Serial.println("\n--- End ---");
-    success = true;
   } else {
     Serial.println("Connection failed!");
   }
 
   freshClient.stop();
   delay(3000);
-  return success;
 }
 
-int sendFailureCount = 0;
-const int MAX_SEND_FAILURES = 3;
+void setupWatdog() {
+  int wdtTimeout = Watchdog.enable(16000);  // request 16s, returns actual timeout granted
+  Serial.print("Watchdog enabled with timeout: ");
+  Serial.print(wdtTimeout);
+  Serial.println(" ms");
+}
 
-void resetWiFi()
-{
-  Serial.println("Resetting WiFi module...");
-  WiFi.disconnect();
-  delay(1000);
-  WiFi.end();
-  delay(2000);
-  setupWiFi();
-  sendFailureCount = 0;
-  Serial.println("WiFi reset complete.");
+void setup() {
+  //Initialize serial and wait for port to open:
+  Serial.begin(9600);
+  snprintf(path, sizeof(path), "/api/sensor_data/%s", name);
+  
+  unsigned long start = millis();
+  while (!Serial && millis() - start < 3000) {
+    ; // wait up to 3s for serial, then continue regardless
+  }
+
+  setupWiFi(); //Copnect to Wifi
+  String fv = WiFi.firmwareVersion();
+  Serial.print("Firmware version: ");
+  Serial.println(fv);
+  setupSensors(); //Connect to Sensors
+  setupWatdog(); //Enable Watch Dog
 }
 
 void loop() {
+  Watchdog.reset();
+
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("WiFi dropped, reconnecting...");
     setupWiFi();  // or whatever your reconnect routine is
@@ -222,6 +210,7 @@ void loop() {
 
   Serial.println("Waiting for PM2.5 sensor...");
   while (!aqi.read(&data)) {
+      Watchdog.reset();
       delay(500); //delay half a second
   }
   Serial.println("PM2.5 ready!");
@@ -247,24 +236,15 @@ void loop() {
   Serial.print(" PM10: "); Serial.println(data.pm100_standard);
   Serial.print("Particles >0.3um: "); Serial.println(data.particles_03um);
 
-  bool sent = sendToServer(temperature, humidity, data.aqi_pm25_us, data.aqi_pm100_us, data.particles_03um);
-
-  if (sent) {
-    sendFailureCount = 0;
-  } else {
-    sendFailureCount++;
-    Serial.print("Send failure count: ");
-    Serial.println(sendFailureCount);
-    
-    if (sendFailureCount >= MAX_SEND_FAILURES) {
-      Serial.println("Too many failures, resetting WiFi.");
-      resetWiFi();
-    }
-  }
+  sendToServer(temperature, humidity, data.aqi_pm25_us, data.aqi_pm100_us, data.particles_03um);
 
   Serial.println("Next Reading in Five Minutes");
-  delay(300000); //Wait to send next reading in five minutes
   //delay(60000);
+  //delay(300000); //Wait to send next reading in five minutes
+  for (int i = 0; i < 300; i++) {
+    Watchdog.reset();
+    delay(1000);
+  }
 }
 
 
