@@ -57,6 +57,7 @@ void setupWiFi() {
   Serial.println(ssid);
   
   do {
+    Watchdog.reset();
     Serial.println("Connecting ...");
     WiFi.begin(ssid, pass);
     delay(5000);
@@ -100,7 +101,7 @@ void setupSensors() {
     Serial.println("-- Default Test Temperature and Humidity --");
 }
 
-void sendToServer(float temperature, float humidity, float aqi_pm25, float aqi_pm100, float aqi_pm03um) {
+bool sendToServer(float temperature, float humidity, float aqi_pm25, float aqi_pm100, float aqi_pm03um) {
   Serial.println("Starting connection to server...");
   JsonDocument doc;
   doc["name"] = name;
@@ -121,6 +122,7 @@ void sendToServer(float temperature, float humidity, float aqi_pm25, float aqi_p
   // Fresh client for each request
   WiFiSSLClient freshClient;
   
+  bool success = false;
   if (freshClient.connect(server, 443)) {
     Serial.println("connected to server");
 
@@ -167,15 +169,17 @@ void sendToServer(float temperature, float humidity, float aqi_pm25, float aqi_p
         }
     }
     Serial.println("\n--- End ---");
+    success = true;
   } else {
     Serial.println("Connection failed!");
   }
 
   freshClient.stop();
   delay(3000);
+  return success;
 }
 
-void setupWatdog() {
+void setupWatchdog() {
   int wdtTimeout = Watchdog.enable(16000);  // request 16s, returns actual timeout granted
   Serial.print("Watchdog enabled with timeout: ");
   Serial.print(wdtTimeout);
@@ -192,25 +196,30 @@ void setup() {
     ; // wait up to 3s for serial, then continue regardless
   }
 
+  setupWatchdog(); //Enable Watch Dog
+  
+  Watchdog.reset();
   setupWiFi(); //Copnect to Wifi
+  
+  Watchdog.reset();
   String fv = WiFi.firmwareVersion();
   Serial.print("Firmware version: ");
   Serial.println(fv);
+  
+  Watchdog.reset();
   setupSensors(); //Connect to Sensors
-  setupWatdog(); //Enable Watch Dog
+
+  Watchdog.reset();
 }
+
+int sendFailureCount = 0;
+const int MAX_SEND_FAILURES = 5;
 
 void loop() {
   Watchdog.reset();
 
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("WiFi dropped, reconnecting...");
-    setupWiFi();  // or whatever your reconnect routine is
-  }
-
   Serial.println("Waiting for PM2.5 sensor...");
   while (!aqi.read(&data)) {
-      Watchdog.reset();
       delay(500); //delay half a second
   }
   Serial.println("PM2.5 ready!");
@@ -236,11 +245,24 @@ void loop() {
   Serial.print(" PM10: "); Serial.println(data.pm100_standard);
   Serial.print("Particles >0.3um: "); Serial.println(data.particles_03um);
 
-  sendToServer(temperature, humidity, data.aqi_pm25_us, data.aqi_pm100_us, data.particles_03um);
+  bool sent = sendToServer(temperature, humidity, data.aqi_pm25_us, data.aqi_pm100_us, data.particles_03um);
 
   Serial.println("Next Reading in Five Minutes");
-  //delay(60000);
-  //delay(300000); //Wait to send next reading in five minutes
+
+  if (sent) {
+    sendFailureCount = 0;
+  } else {
+    sendFailureCount++;
+    Serial.print("Send failure count: ");
+    Serial.println(sendFailureCount);
+    
+    if (sendFailureCount >= MAX_SEND_FAILURES) {
+      Serial.println("Too many failures, rebooting.");
+      //Reboot
+      NVIC_SystemReset();
+    }
+  }
+
   for (int i = 0; i < 300; i++) {
     Watchdog.reset();
     delay(1000);
