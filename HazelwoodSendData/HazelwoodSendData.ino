@@ -1,39 +1,37 @@
-#include <SPI.h>
-#include <WiFiNINA.h>
 #include <ArduinoJson.h> 
-// Configure the pins used for the ESP32 connection
-  #define SPIWIFI       SPI  // The SPI port
-  #define SPIWIFI_SS    13   // Chip select pin
-  #define ESP32_RESETN  12   // Reset pin
-  #define SPIWIFI_ACK   11   // a.k.a BUSY or READY pin
-  #define ESP32_GPIO0   -1
-  
+#include <WiFi.h>
+#include <NetworkClientSecure.h>
+
 #include "arduino_secrets.h"
 //----LIBRARIES
 //Air quality monitor libraries
 #include "Adafruit_PM25AQI.h"
 //Humidity and temperature sensor libraries
 #include <Wire.h>
-#include <SPI.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BME280.h>
-#include <Adafruit_SleepyDog.h>
+#include <esp_task_wdt.h>
 
 ///////please enter your sensitive data in the Secret tab/arduino_secrets.h
-char ssid[] = SECRET_SSID;          // your network SSID (name)
-char pass[] = SECRET_PASS;          // your network password (use for WPA, or use as key for WEP)
+const char *ssid = SECRET_SSID;
+const char *password = SECRET_PASS;
+//char ssid[] = SECRET_SSID;          // your network SSID (name)
+//char pass[] = SECRET_PASS;          // your network password (use for WPA, or use as key for WEP)
 char api_key[] = HAZELWOOD_API_KEY; // Hazelwood API Key 
 int keyIndex = 0;            // your network key Index number (needed only for WEP)
 
 char name[] = "test";
 char path[64]; // size must be large enough
-char server[] = "artsexcursionairquality.org";
+const char *server = "artsexcursionairquality.org";
 
 float lat = 40.40662;
 float lon = -79.94271;
 
 //----MACROS
 //Air quality monitor macros:
+//PMS5003 RX no connect
+//PMS5003 TX (Pin labeled RX on M4)
+//PMS5003 reset 13
 #define PM25AQI_RESET 13
 //Humidity and temperature sensor macros:
 #define SEALEVELPRESSURE_HPA (1013.25)
@@ -46,25 +44,28 @@ PM25_AQI_Data data; //structure that stores the air quality data
 Adafruit_BME280 bme; //  We will use I2C to talk to the sensor
 
 void setupWiFi() {
-  // check for the WiFi module:
-  WiFi.setPins(SPIWIFI_SS, SPIWIFI_ACK, ESP32_RESETN, ESP32_GPIO0, &SPIWIFI);
-  while (WiFi.status() == WL_NO_MODULE) {
-    Serial.println("Communication with WiFi module failed!");
-    delay(1000);
+  Serial.print("\nAttempting to connect to SSID: ");
+  Serial.println(ssid);
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);  // kick off once
+
+  int numberOfTries = 20;  // ~40 seconds with 2s delays
+  while (WiFi.status() != WL_CONNECTED && numberOfTries > 0) {
+    esp_task_wdt_reset();
+    Serial.print("Status: ");
+    Serial.println(WiFi.status());
+    delay(2000);
+    numberOfTries--;
   }
 
-  Serial.print("Attempting to connect to SSID: ");
-  Serial.println(ssid);
-  
-  do {
-    Watchdog.reset();
-    Serial.println("Connecting ...");
-    WiFi.begin(ssid, pass);
-    delay(5000);
-  } while (WiFi.status() != WL_CONNECTED);
-
-  Serial.println("Connected to wifi!");
-  printWifiStatus();  
+  if (WiFi.status() == WL_CONNECTED) {
+    printWifiStatus();
+  } else {
+    Serial.println("[WiFi] Failed to connect. Rebooting to try fresh.");
+    delay(100);
+    ESP.restart();  // let the watchdog approach handle this cleanly
+  }
 }
 
 void setupSensors() {
@@ -102,6 +103,7 @@ void setupSensors() {
 }
 
 bool sendToServer(float temperature, float humidity, float aqi_pm25, float aqi_pm100, float aqi_pm03um) {
+  esp_task_wdt_reset();
   Serial.println("Starting connection to server...");
   JsonDocument doc;
   doc["name"] = name;
@@ -120,10 +122,13 @@ bool sendToServer(float temperature, float humidity, float aqi_pm25, float aqi_p
   Serial.println(jsonString);
 
   // Fresh client for each request
-  WiFiSSLClient freshClient;
+  NetworkClientSecure client;
+  client.setInsecure();  // skip cert validation for now — see note below
+
+  esp_task_wdt_reset();
   
   bool success = false;
-  if (freshClient.connect(server, 443)) {
+  if (client.connect(server, 443)) {
     Serial.println("connected to server");
 
     Serial.print("Sending with key length: ");
@@ -140,50 +145,54 @@ bool sendToServer(float temperature, float humidity, float aqi_pm25, float aqi_p
                      "\r\n" +
                      jsonString;
 
-    freshClient.print(request);
-    freshClient.flush();
-
-    // Wait for response
-    unsigned long timeout = millis();
-    while (freshClient.connected() && !freshClient.available()) {
-      if (millis() - timeout > 10000) {
-        Serial.println("Response timeout!");
-        break;
-      }
-    }
-
-    // Read response
-    Serial.println("--- Response ---");
-    unsigned long readStart = millis();
-    while (freshClient.connected() || freshClient.available()) {
-        if (freshClient.available()) {
-            char c = freshClient.read();
-            if (c >= 32 || c == '\n' || c == '\r') {
-                Serial.print(c);
-            }
-            readStart = millis();  // reset timeout on activity
-        }
-        if (millis() - readStart > 5000) {
-            Serial.println("\nRead timeout!");
-            break;
-        }
-    }
+    client.print(request);
+    
+    esp_task_wdt_reset();
+    readResponse(&client);
+    
     Serial.println("\n--- End ---");
     success = true;
   } else {
     Serial.println("Connection failed!");
   }
 
-  freshClient.stop();
+  client.stop();
+  esp_task_wdt_reset();
   delay(3000);
   return success;
 }
 
+void readResponse(NetworkClient *client) {
+  unsigned long timeout = millis();
+  while (client->available() == 0) {
+    esp_task_wdt_reset();
+    if (millis() - timeout > 5000) {
+      Serial.println(">>> Client Timeout !");
+      client->stop();
+      return;
+    }
+  }
+
+  // Read all the lines of the reply from server and print them to Serial
+  while (client->available()) {
+    esp_task_wdt_reset();
+    String line = client->readStringUntil('\r');
+    Serial.print(line);
+  }
+
+  Serial.printf("\nClosing connection\n");
+}
+
 void setupWatchdog() {
-  int wdtTimeout = Watchdog.enable(16000);  // request 16s, returns actual timeout granted
-  Serial.print("Watchdog enabled with timeout: ");
-  Serial.print(wdtTimeout);
-  Serial.println(" ms");
+  esp_task_wdt_config_t wdt_config = {
+    .timeout_ms = 16000,
+    .idle_core_mask = 0,
+    .trigger_panic = true
+  };
+  esp_task_wdt_init(&wdt_config);
+  esp_task_wdt_add(NULL);  // add current task to watchdog
+
+  Serial.print("Watchdog enabled with timeout: 16000");
 }
 
 void setup() {
@@ -198,25 +207,20 @@ void setup() {
 
   setupWatchdog(); //Enable Watch Dog
   
-  Watchdog.reset();
-  setupWiFi(); //Copnect to Wifi
+  esp_task_wdt_reset();
+  setupWiFi(); //Connect to Wifi
   
-  Watchdog.reset();
-  String fv = WiFi.firmwareVersion();
-  Serial.print("Firmware version: ");
-  Serial.println(fv);
-  
-  Watchdog.reset();
+  esp_task_wdt_reset();
   setupSensors(); //Connect to Sensors
 
-  Watchdog.reset();
+  esp_task_wdt_reset();
 }
 
 int sendFailureCount = 0;
 const int MAX_SEND_FAILURES = 5;
 
 void loop() {
-  Watchdog.reset();
+  esp_task_wdt_reset();
 
   Serial.println("Waiting for PM2.5 sensor...");
   while (!aqi.read(&data)) {
@@ -259,16 +263,15 @@ void loop() {
     if (sendFailureCount >= MAX_SEND_FAILURES) {
       Serial.println("Too many failures, rebooting.");
       //Reboot
-      NVIC_SystemReset();
+      ESP.restart();
     }
   }
 
   for (int i = 0; i < 300; i++) {
-    Watchdog.reset();
+    esp_task_wdt_reset();
     delay(1000);
   }
 }
-
 
 void printWifiStatus() {
   // print the SSID of the network you're attached to:
