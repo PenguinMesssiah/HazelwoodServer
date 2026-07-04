@@ -212,6 +212,12 @@ def process_sensor_data(device_name):
 def show_sensor_data(device_name):
     if not USING_DB:
         return "No data available"
+    
+    try:
+        limit = int(request.args.get("limit", 10))
+    except ValueError:
+        return "Invalid limit", 400
+    limit = max(1, min(limit, 10000))
 
     data = []
 
@@ -220,7 +226,7 @@ def show_sensor_data(device_name):
             db["Sensor Data"]
             .find({"measurement_type": measurement_type, "device_name": device_name})
             .sort("timestamp", -1)
-            .limit(10)
+            .limit(limit)
         )
 
         if last_ten:
